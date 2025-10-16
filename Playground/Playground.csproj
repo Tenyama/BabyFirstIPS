@@ -1,0 +1,66 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<RootNamespace>Playground</RootNamespace>
+		<StartupObject>Playground.Program</StartupObject>
+
+		<!-- BUILD DETAILS-->
+		<TargetFramework>net8.0-windows10.0.22621.0</TargetFramework>
+		<SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+		<RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <OutputType>Exe</OutputType>
+		<Configurations>Debug;Release</Configurations>
+		<AppendTargetFrameworkToOutputPath>true</AppendTargetFrameworkToOutputPath>
+		<AppendRuntimeIdentifierToOutputPath>true</AppendRuntimeIdentifierToOutputPath>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<SatelliteResourceLanguages>en-AU</SatelliteResourceLanguages>
+		<UseWindowsForms>true</UseWindowsForms>
+
+		<!-- IDE -->
+		<ImplicitUsings>disable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+	</PropertyGroup>
+
+	<!--RELEASE BUILDS-->
+	<ItemGroup Condition="'$(Configuration)' == 'Release'">
+		<Compile Remove="bin\**" />
+		<Compile Remove="obj\**" />
+		<Compile Remove=".Tests\**" />
+		<EmbeddedResource Remove="bin\**" />
+		<EmbeddedResource Remove="obj\**" />
+		<EmbeddedResource Remove=".Tests\**" />
+		<None Remove="bin\**" />
+		<None Remove="obj\**" />
+		<None Remove=".Tests\**" />
+	</ItemGroup>
+
+	<ItemGroup Condition="'$(Configuration)' == 'Release'">
+		<PackageReference Include="System.IO.Packaging" Version="9.0.0" />
+		<PackageReference Include="DocumentFormat.OpenXml" Version="3.2.0" />
+		<PackageReference Include="System.Data.OleDb" Version="9.0.0" />
+	</ItemGroup>
+
+	<!--DEBUG BUILDS-->
+	<ItemGroup Condition="'$(Configuration)' == 'Debug'">
+		<Compile Include=".Tests\**\*.cs" />
+		<Compile Remove="bin\**" />
+		<Compile Remove="obj\**" />
+		<EmbeddedResource Remove="bin\**" />
+		<EmbeddedResource Remove="obj\**" />
+		<None Remove="bin\**" />
+		<None Remove="obj\**" />
+		<Content Include=".Tests\.Objects\*.*">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</Content>
+	</ItemGroup>
+
+	<ItemGroup Condition="'$(Configuration)' == 'Debug'">
+		<PackageReference Include="System.IO.Packaging" Version="9.0.7" />
+		<PackageReference Include="DocumentFormat.OpenXml" Version="3.3.0" />
+		<PackageReference Include="System.Data.OleDb" Version="9.0.7" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+		<PackageReference Include="MSTest.TestAdapter" Version="3.10.0" />
+		<PackageReference Include="MSTest.TestFramework" Version="3.10.0" />
+	</ItemGroup>
+
+</Project>
