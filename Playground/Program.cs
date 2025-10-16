@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
 using System.Linq;
@@ -11,10 +12,10 @@ namespace Playground
 {
     class Program
     {
-        private const string PipeName = "SingleInstanceChannel";
-        private static readonly ConcurrentDictionary<Guid, NamedPipeServerStream> ConnectedClients = new();
+        private const string pipeName = "SingleInstanceChannel";
+        private static readonly ConcurrentDictionary<Guid, NamedPipeServerStream> connectedClients = new();
 
-        static async Task Main(string[] args)
+        static async Task Main()
         {
             Mutex mutex = new(true, "SingleInstanceMutex", out bool isFirstInstance);
             if (!isFirstInstance)
@@ -22,24 +23,27 @@ namespace Playground
                 // 🚀 Another instance exists → connect and send a message
                 try
                 {
-                    await ConnectAsClient();
+                    await ConnectAsClientAsync();
                     return; // Client should exit after connecting and handling messages
                 }
                 catch (TimeoutException)
                 {
-                    Console.WriteLine("Original host is gone - becoming new host");
+                    Console.WriteLine("Original host is gone or None initiated- becoming new host");
                     await RunServerAsync();
                 }
                 catch (IOException)
                 {
                     Console.WriteLine("Original host is gone - becoming new host");
 
-                    Mutex newMutex = new(true, "PeerServerMutex", out bool isHost);
-                    if (isHost) await RunServerAsync();
+                    _ = new Mutex(true, "PeerServerMutex", out bool isHost);
+                    if (isHost)
+                    {
+                        await RunServerAsync();
+                    }
                     else
                     {
                         Console.WriteLine("Looks like a new boss is in town");
-                        await ConnectAsClient();
+                        await ConnectAsClientAsync();
                     }
                 }
             }
@@ -51,44 +55,46 @@ namespace Playground
 
             // Keep alive so server stays running
             Console.WriteLine("Press ENTER to quit...");
-            Console.ReadLine();
+            _ = Console.ReadLine();
             mutex?.Dispose();
         }
 
+        // THE WARNING SUPPRESSION BELOW IS INTENTIONAL
+        // Because this method is designed to run indefinitely in the background,
+#pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
         static async Task RunServerAsync()
+            => _ = Task.Run(async () =>
+               {
+                   while (true)
+                   {
+                       try
+                       {
+                           NamedPipeServerStream server = new(
+                               pipeName,
+                               PipeDirection.InOut,
+                               NamedPipeServerStream.MaxAllowedServerInstances,
+                               PipeTransmissionMode.Message,
+                               PipeOptions.Asynchronous);
+
+                           await server.WaitForConnectionAsync();
+
+                           // Handle each client in its own task
+                           _ = Task.Run(async () => await HandleClientConnectionAsync(server));
+                       }
+                       catch (Exception ex)
+                       {
+                           Console.WriteLine($"Server error: {ex.Message}");
+                       }
+                   }
+               });
+#pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
+
+        static async Task HandleClientConnectionAsync(NamedPipeServerStream server)
         {
-            _ = Task.Run(async () =>
-            {
-                while (true)
-                {
-                    try
-                    {
-                        var server = new NamedPipeServerStream(
-                            PipeName,
-                            PipeDirection.InOut,
-                            NamedPipeServerStream.MaxAllowedServerInstances,
-                            PipeTransmissionMode.Message,
-                            PipeOptions.Asynchronous);
+            Guid clientId = Guid.NewGuid();
+            connectedClients[clientId] = server;
 
-                        await server.WaitForConnectionAsync();
-
-                        // Handle each client in its own task
-                        _ = Task.Run(async () => await HandleClientConnection(server));
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Server error: {ex.Message}");
-                    }
-                }
-            });
-        }
-
-        static async Task HandleClientConnection(NamedPipeServerStream server)
-        {
-            var clientId = Guid.NewGuid();
-            ConnectedClients[clientId] = server;
-
-            Console.WriteLine($"Client connected: {clientId}. Total clients: {ConnectedClients.Count}");
+            Console.WriteLine($"Client connected: {clientId}. Total clients: {connectedClients.Count}");
 
             try
             {
@@ -96,14 +102,14 @@ namespace Playground
 
                 while (server.IsConnected)
                 {
-                    int bytesRead = await server.ReadAsync(buffer, 0, buffer.Length);
+                    int bytesRead = await server.ReadAsync(buffer);
                     if (bytesRead > 0)
                     {
                         string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
                         Console.WriteLine($"📩 Received from {clientId}: {message}");
 
                         // Broadcast to all other clients
-                        await BroadcastMessage(message, clientId);
+                        await BroadcastMessageAsync(message, clientId);
                     }
                     else
                     {
@@ -119,50 +125,50 @@ namespace Playground
             finally
             {
                 // Clean up
-                ConnectedClients.TryRemove(clientId, out _);
+                _ = connectedClients.TryRemove(clientId, out _);
                 server?.Dispose();
-                Console.WriteLine($"Client disconnected: {clientId}. Total clients: {ConnectedClients.Count}");
+                Console.WriteLine($"Client disconnected: {clientId}. Total clients: {connectedClients.Count}");
             }
         }
 
-        static async Task BroadcastMessage(string message, Guid senderId)
+        static async Task BroadcastMessageAsync(string message, Guid senderId)
         {
-            var tasks = ConnectedClients
+            IEnumerable<Task> tasks = connectedClients
                 .Where(client => client.Key != senderId && client.Value.IsConnected)
                 .Select(async client =>
                 {
                     try
                     {
                         byte[] messageBytes = Encoding.UTF8.GetBytes($"Broadcast from {senderId}: {message}");
-                        await client.Value.WriteAsync(messageBytes, 0, messageBytes.Length);
+                        await client.Value.WriteAsync(messageBytes);
                         await client.Value.FlushAsync();
                     }
                     catch (Exception ex)
                     {
                         Console.WriteLine($"Failed to send to client {client.Key}: {ex.Message}");
-                        ConnectedClients.TryRemove(client.Key, out _);
+                        _ = connectedClients.TryRemove(client.Key, out _);
                     }
                 });
 
             await Task.WhenAll(tasks);
         }
 
-        static async Task ConnectAsClient()
+        static async Task ConnectAsClientAsync()
         {
-            using var client = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+            using NamedPipeClientStream client = new(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
             await client.ConnectAsync(2000);
 
             Console.WriteLine("Connected to server! Type messages to broadcast (type 'exit' to quit):");
 
             // Start reading messages in background
-            var readTask = Task.Run(async () =>
+            Task readTask = Task.Run(async () =>
             {
                 byte[] buffer = new byte[1024];
                 while (client.IsConnected)
                 {
                     try
                     {
-                        int bytesRead = await client.ReadAsync(buffer, 0, buffer.Length);
+                        int bytesRead = await client.ReadAsync(buffer);
                         if (bytesRead > 0)
                         {
                             string receivedMessage = Encoding.UTF8.GetString(buffer, 0, bytesRead);
@@ -176,7 +182,10 @@ namespace Playground
                     catch (Exception ex)
                     {
                         if (client.IsConnected)
+                        {
                             Console.WriteLine($"Unknown Read error: {ex.Message}");
+                        }
+
                         break;
                     }
                 }
@@ -185,16 +194,18 @@ namespace Playground
             // Handle writing messages with proper message boundaries
             while (client.IsConnected)
             {
-                var message = Console.ReadLine();
+                string? message = Console.ReadLine();
                 if (string.Equals(message, "exit", StringComparison.OrdinalIgnoreCase))
+                {
                     break;
+                }
 
                 if (!string.IsNullOrEmpty(message))
                 {
                     try
                     {
                         byte[] messageBytes = Encoding.UTF8.GetBytes(message);
-                        await client.WriteAsync(messageBytes, 0, messageBytes.Length);
+                        await client.WriteAsync(messageBytes);
                         await client.FlushAsync();
                         Console.WriteLine($"✓ Sent: {message}");
                     }
